@@ -88,7 +88,7 @@ def post(_id):
 if __name__ == "__main__": 
     if os.environ.get("DEV"): 
         debug(True)
-        run(app=app, port=os.environ.get("PORT", 8080), reloader=True)
+        run(app=app, host="0.0.0.0", port=os.environ.get("PORT", 8080), reloader=True)
     else:
-        run(app=app, port=os.environ.get("PORT"))
+        run(app=app, host="0.0.0.0", port=os.environ.get("PORT"))
         
