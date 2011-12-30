@@ -1,17 +1,38 @@
 
-from pymongo import Connection
-from bson.objectid import ObjectId
-import bson.json_util
 from bottle import run, debug, static_file, request, response, Bottle
 from json import dumps as json_dumps
 import os
 
-class MyJSONPlugin(object):
-    "JSON Serialization Plugin for Bottle that automatically serializes MongoDB/BSON Values  "
-    name = 'myjson'
+## MongoPlugin
+from bottle import PluginError
+from pymongo import Connection
+from bson.objectid import ObjectId
+import bson.json_util
+from bottle import JSONPlugin
+import inspect
+
+class MongoPlugin(object):
+    """
+    Mongo Plugin for Bottle
+    Creates a mongo database 
+    app = bottle.Bottle()
+    plugin = bottle.ext.mongo.MongoPlugin(uri="...", json_mongo=True)
+    app.install(plugin)
+
+    @app.route('/show/:item')
+    def show(item, mongodb):
+        doc = mongodb['items'].find({item:"item")})
+        return doc
+    """
     api  = 2
 
-    def normalize_id(self, obj):
+    def __init__(self, uri, keyword='mongodb', json_mongo=False):
+        self.uri = uri
+        self.keyword = keyword
+        self.json_mongo = json_mongo
+        
+    def normalize_object(self, obj):
+        "Normalize mongo object for json serialization"
         if isinstance(obj, dict):
             if "_id" in obj: 
                 obj["id"] = str(obj["_id"])
@@ -20,23 +41,41 @@ class MyJSONPlugin(object):
             for a in obj: 
                 self.normalize_id(a)
 
+    def setup(self,app):
+        for other in app.plugins:
+            if not isinstance(other,MongoPlugin): continue
+            if other.keyword == self.keyword:
+                raise PluginError("Found another redis plugin with "\
+                        "conflicting settings (non-unique keyword).")
+                        
+        # Remove builtin JSON Plugin
+        if self.json_mongo:
+            for other in app.plugins:
+                if isinstance(other, JSONPlugin): 
+                    app.uninstall(other)
+                    return                         
+
     def apply(self, callback, context):
         dumps = json_dumps
         if not dumps: return callback
+        
+        args = inspect.getargspec(context['callback'])[0]        
+        
         def wrapper(*a, **ka):
+            if self.keyword in args:
+                ka[self.keyword] = get_mongo()
             rv = callback(*a, **ka)
-            if isinstance(rv, dict) or isinstance(rv, list):
-                #Attempt to serialize, raises exception on failure
-                self.normalize_id(rv)
-                json_response = dumps(rv, default=bson.json_util.default)
-                #Set content type only if serialization succesful
-                response.content_type = 'application/json'
-                return json_response
+            if self.json_mongo:  # Override builtin bottle JSON->String serializer  
+                if isinstance(rv, dict) or isinstance(rv, list):
+                    self.normalize_object(rv)
+                    json_response = dumps(rv, default=bson.json_util.default)
+                    response.content_type = 'application/json'
+                    return json_response
             return rv
         return wrapper
 
 app = Bottle(autojson=False)
-app.install(MyJSONPlugin())
+app.install(MongoPlugin(uri=os.environ["MONGOLAB_URI"]))
 
 server_root = None
 @app.route('/<filename:re:.*\.(css|js|ico|html)>')
@@ -64,26 +103,22 @@ def get_mongo():
         return db
 
 @app.route("/posts", method="GET")
-def posts_list():
-    db = get_mongo()
-    return [a for a in db['posts'].find()]
+def posts_list(mongodb):
+    return [a for a in mongodb['posts'].find()]
 
 @app.route("/posts", method="POST")
-def posts_create(): 
-    db = get_mongo()
+def posts_create(mongodb): 
     print request.environ
     print request.json
-    return {"_id": db['posts'].insert({"text":request.json["text"]}), "text": request.json["text"]}
+    return {"_id": mongodb['posts'].insert({"text":request.json["text"]}), "text": request.json["text"]}
     
 @app.route("/posts/:_id", method="PUT")
-def posts_update(_id):
-    db = get_mongo()
-    db['posts'].update({"_id":ObjectId(request.json["id"])}, {"$set": {"text": request.json["text"] } })
+def posts_update(_id, mongodb):
+    mongodb['posts'].update({"_id":ObjectId(request.json["id"])}, {"$set": {"text": request.json["text"] } })
 
 @app.route("/posts/:_id", method="DELETE")
-def post(_id):
-    db = get_mongo()
-    db['posts'].remove({_id:ObjectId(request.json["id"])})
+def post(_id, mongodb):
+    mongodb['posts'].remove({_id:ObjectId(request.json["id"])})
     
 if __name__ == "__main__": 
     if os.environ.get("DEV"): 
