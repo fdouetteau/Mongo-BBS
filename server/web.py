@@ -15,7 +15,6 @@ def server_static(filename):
         server_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'client', 'public')
     return static_file(filename, root=server_root)
 
-
 @app.route("/posts", method="GET")
 def posts_list(mongodb):
     return [a for a in mongodb['posts'].find()]
